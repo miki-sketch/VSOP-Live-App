@@ -159,13 +159,19 @@ L_STATUS = ensure_col(df_lives, ["STATUS", "状態", "ステータス"], fallbac
 
 # 画面トップでのデバッグ表示 (デフォルトは閉じておく)
 with st.expander("🛠️ スプレッドシート列名デバッグ"):
-    st.write("### マッピング結果")
-    st.write({
-        "楽曲名": C_SONG, "演奏番号": C_ORDER, "YouTubeID": C_YT_ID, 
-        "ライブ名(ライブ一覧)": L_LIVE_TITLE, "ライブID(ライブ一覧)": L_LIVE_NAME
-    })
-    st.write("### 演奏曲目 シートの列名", df_songs.columns.tolist())
-    st.write("### ライブ一覧 シートの列名", df_lives.columns.tolist())
+    st.write("### マッピング結果 (どの列を使っているか)")
+    mapping_sum = {
+        "楽曲名": C_SONG, "演奏番号/曲順": C_ORDER, "YouTubeリンク/ID": C_YT_ID, 
+        "ライブID(演奏曲目シート)": C_LIVE_LINK,
+        "ライブ名(ライブ一覧シート)": L_LIVE_TITLE, "ライブID(ライブ一覧シート)": L_LIVE_NAME
+    }
+    st.table(pd.DataFrame([mapping_sum]).T.rename(columns={0: "認識された列名"}))
+    
+    st.write("### 演奏曲目シートの先頭5行 (データ確認用)")
+    st.dataframe(df_songs[[C_SONG, C_ORDER, C_YT_ID, C_LIVE_LINK]].head(5))
+    
+    st.write("### ライブ一覧シートの先頭5行 (データ確認用)")
+    st.dataframe(df_lives[[L_LIVE_TITLE, L_LIVE_NAME, L_DATE]].head(5))
 
 # --- Sidebar Navigation ---
 st.sidebar.title("VSOP Live Dashboard")
@@ -257,18 +263,17 @@ elif menu == "📅 ライブ明細検索":
                 yt_link = make_youtube_url(row[C_YT_ID], start)
                 
                 with st.container():
-                    # 数値として確実に表示 (ブラウザが . を勝手に翻訳して 。 にするのを防ぐ)
                     try:
                         raw_order = float(str(row[C_ORDER]))
                         display_order = str(int(raw_order)) if not pd.isna(raw_order) and raw_order != 999 else "-"
                     except:
                         display_order = "-"
                         
-                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">▶️ {row[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{row[C_SONG]}</span>'
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no" style="font-size: 1.3rem;">▶️ {row[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no" style="font-size: 1.3rem;">{row[C_SONG]}</span>'
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
                         <div class="song-title" translate="no">
-                            <span class="notranslate" translate="no">{display_order}.</span> {link_html}
+                            <span class="notranslate" translate="no" style="color:#ff4b4b">{display_order}.</span> {link_html}
                         </div>
                         <div class="song-meta notranslate" translate="no">
                             Vocal: {row[C_VOCAL]} | 演奏時間: {row[C_TIME]}
@@ -323,12 +328,12 @@ elif menu == "🚀 次回演奏予定":
                     except:
                         start = 0
                     yt_link = make_youtube_url(song[C_YT_ID], start)
-                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">▶️ {song[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{song[C_SONG]}</span>'
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no" style="font-size: 1.2rem;">▶️ {song[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no" style="font-size: 1.2rem;">{song[C_SONG]}</span>'
                         
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
                         <div class="song-title" translate="no">
-                            <span class="notranslate" translate="no">{display_order}.</span> {link_html}
+                            <span class="notranslate" translate="no" style="color:#ff4b4b">{display_order}.</span> {link_html}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
