@@ -55,12 +55,11 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
+    # Secrets の [connections.gsheets] から自動的に認証情報と
+    # スプレッドシートのURL(spreadsheet = "...")を読み込みます
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # スプレッドシート名：「VSOPライブ情報」
-    # 実際には st.secrets でスプレッドシートのURLやID、サービスアカウントキーを設定
-    # ここでは仕様に基づき、シート名から読み込む想定（Streamlit GSheets Connectionの挙動）
-    
+    # スプレッドシート内の各シートを読み込み
     df_songs = conn.read(worksheet="演奏曲目")
     df_lives = conn.read(worksheet="ライブ一覧")
     
