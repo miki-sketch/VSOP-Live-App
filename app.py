@@ -136,7 +136,7 @@ C_SONG = ensure_col(df_songs, ["楽曲名", "曲名", "Song"])
 C_TIME = ensure_col(df_songs, ["演奏時間（平均）", "平均演奏時間", "演奏時間", "Time"], fallback_val="0")
 C_VOCAL = ensure_col(df_songs, ["ボーカル", "Vocal", "唄"])
 C_ORDER = ensure_col(df_songs, ["演奏順", "No", "順序", "Order"], fallback_val="0")
-C_LIVE_LINK = ensure_col(df_songs, ["ライブ名", "Live", "公演名"])
+C_LIVE_LINK = ensure_col(df_songs, ["ライブ番号", "ID", "ライブ名", "Live", "公演名"]) # ライブ番号を優先
 C_YT_ID = ensure_col(df_songs, ["YOUTUBE_ID", "Youtube", "VideoID"])
 C_START = ensure_col(df_songs, ["STARTTIME", "開始時間", "Start"], fallback_val="0")
 C_LAST = ensure_col(df_songs, ["ラスト", "演奏番号", "Key", "前回"], fallback_val="-")
@@ -144,7 +144,8 @@ C_LAST = ensure_col(df_songs, ["ラスト", "演奏番号", "Key", "前回"], fa
 # 2. ライブ一覧
 L_DATE = ensure_col(df_lives, ["日付", "Date", "開催日"])
 L_VENUE = ensure_col(df_lives, ["会場名", "会場", "Venue", "場所"])
-L_LIVE_NAME = ensure_col(df_lives, ["ライブ名", "Live", "名称"])
+L_LIVE_NAME = ensure_col(df_lives, ["ライブ番号", "ID", "ライブ名", "Live", "名称"]) # ライブ番号を優先
+L_LIVE_TITLE = ensure_col(df_lives, ["ライブ名", "Live", "公演名", "名称"]) # 表示用の名前
 L_STATUS = ensure_col(df_lives, ["STATUS", "状態", "ステータス"], fallback_val="済")
 
 # --- Sidebar Navigation ---
@@ -210,15 +211,20 @@ elif menu == "📅 ライブ明細検索":
         
         st.divider()
         st.header(f"🎸 {selected_live[L_VENUE]}")
-        st.info(f"開催日: {selected_live[L_DATE]}")
+        st.info(f"開催日: {selected_live[L_DATE]} | {selected_live[L_LIVE_TITLE]}")
         
-        # セットリスト抽出
-        live_songs = df_songs[df_songs[C_LIVE_LINK] == selected_live[L_LIVE_NAME]]
+        # セットリスト抽出 (ライブ番号/IDで紐付け)
+        live_songs = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_live[L_LIVE_NAME])]
         if "(仮想)" not in C_ORDER:
             live_songs = live_songs.sort_values(C_ORDER)
         
         if live_songs.empty:
             st.write("セットリスト情報がありません。")
+            # デバッグ用に検索キーを表示 (管理用)
+            with st.expander("詳細デバッグ"):
+                st.write(f"検索キー(C_LIVE_LINK): {C_LIVE_LINK}")
+                st.write(f"検索値(selected_live[L_LIVE_NAME]): {selected_live[L_LIVE_NAME]}")
+                st.write("演奏曲目シートのリンク列データサンプル:", df_songs[C_LIVE_LINK].head().tolist())
         else:
             for _, row in live_songs.iterrows():
                 yt_id = row[C_YT_ID] if row[C_YT_ID] != "-" else ""
@@ -249,20 +255,30 @@ elif menu == "🚀 次回演奏予定":
     if upcoming_lives.empty:
         st.success("現在、予定されているライブはありません。")
     else:
-        display_cols = [c for c in [L_DATE, L_LIVE_NAME, L_VENUE] if "(仮想)" not in c]
+        display_cols = [c for c in [L_DATE, L_LIVE_TITLE, L_VENUE] if "(仮想)" not in c]
         st.subheader("次回ライブ予定一覧")
         st.dataframe(upcoming_lives[display_cols], use_container_width=True, hide_index=True)
         
-        selected_next = st.selectbox("詳細を見るライブ", upcoming_lives[L_LIVE_NAME].tolist())
+        # 選択肢はタイトルを表示するが、内部的には ID で特定する
+        live_titles = upcoming_lives[L_LIVE_TITLE].tolist()
+        selected_title = st.selectbox("詳細を見るライブ", live_titles)
         
-        next_setlist = df_songs[df_songs[C_LIVE_LINK] == selected_next]
+        # 選択されたライブの行を特定 (ID/番号を取得するため)
+        selected_live_info = upcoming_lives[upcoming_lives[L_LIVE_TITLE] == selected_title].iloc[0]
+        selected_id = selected_live_info[L_LIVE_NAME]
+        
+        # セットリスト抽出 (ライブ番号/IDで紐付け)
+        next_setlist = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_id)]
         if "(仮想)" not in C_ORDER:
             next_setlist = next_setlist.sort_values(C_ORDER)
         
-        st.header(f"📝 Setlist: {selected_next}")
+        st.header(f"📝 Setlist: {selected_title}")
         
         if next_setlist.empty:
             st.write("このライブのセットリストはまだ登録されていません。")
+            with st.expander("詳細デバッグ"):
+                st.write(f"検索キー(ID): {selected_id}")
+                st.write("演奏曲目シートのリンク列データサンプル:", df_songs[C_LIVE_LINK].head().tolist())
         else:
             for _, song in next_setlist.iterrows():
                 col1, col2 = st.columns([1, 1])
@@ -279,7 +295,7 @@ elif menu == "🚀 次回演奏予定":
                     if last_val and last_val not in ["nan", "-", "0", ""]:
                         past_perf = df_songs[
                             (df_songs[C_LAST].astype(str) == last_val) & 
-                            (df_songs[C_LIVE_LINK] != selected_next)
+                            (df_songs[C_LIVE_LINK].astype(str) != str(selected_id))
                         ].head(1)
                         
                         if not past_perf.empty:
