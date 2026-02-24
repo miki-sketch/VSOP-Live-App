@@ -86,8 +86,8 @@ st.markdown("""
     .song-card { background-color: #1e2130; padding: 20px; border-radius: 15px; margin-bottom: 15px; border-left: 5px solid #ff4b4b; }
     .song-title { font-size: 1.2rem; font-weight: bold; color: #ffffff; }
     .song-meta { font-size: 0.9rem; color: #a0a0a0; }
-    .youtube-link { color: #ffffff !important; text-decoration: none !important; font-weight: bold; }
-    .youtube-link:hover { text-decoration: underline !important; color: #ff4b4b !important; }
+    .youtube-link { color: #ff4b4b !important; text-decoration: underline !important; font-weight: bold; }
+    .youtube-link:hover { color: #ff8080 !important; }
     h1, h2, h3 { color: #f0f2f6; }
 </style>
 </html>
@@ -229,7 +229,7 @@ elif menu == "📅 ライブ明細検索":
         st.info(f"開催日: {selected_live[L_DATE]} | {selected_live[L_LIVE_TITLE]}")
         
         # セットリスト抽出 (ライブ番号/IDで紐付け)
-        live_songs = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_live[L_LIVE_NAME])]
+        live_songs = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_live[L_LIVE_NAME])].copy()
         
         # 演奏番号でソート
         if "(仮想)" not in C_ORDER:
@@ -289,7 +289,7 @@ elif menu == "🚀 次回演奏予定":
         selected_id = selected_live_info[L_LIVE_NAME]
         
         # セットリスト抽出
-        next_setlist = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_id)]
+        next_setlist = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_id)].copy()
         if "(仮想)" not in C_ORDER:
             next_setlist[C_ORDER] = pd.to_numeric(next_setlist[C_ORDER], errors='coerce').fillna(999)
             next_setlist = next_setlist.sort_values(C_ORDER)
@@ -307,11 +307,18 @@ elif menu == "🚀 次回演奏予定":
                         display_order = str(int(raw_order)) if not pd.isna(raw_order) and raw_order != 999 else "-"
                     except:
                         display_order = "-"
+                    
+                    try:
+                        start = int(float(str(song[C_START]).replace("-", "0")))
+                    except:
+                        start = 0
+                    yt_link = make_youtube_url(song[C_YT_ID], start)
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">{song[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{song[C_SONG]}</span>'
                         
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
                         <div class="song-title" translate="no">
-                            <span class="notranslate" translate="no">{display_order}.</span> {song[C_SONG]}
+                            <span class="notranslate" translate="no">{display_order}.</span> {link_html}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
