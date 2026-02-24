@@ -55,9 +55,13 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
-    # Secrets の [connections.gsheets] から自動的に認証情報と
-    # スプレッドシートのURL(spreadsheet = "...")を読み込みます
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    # Streamlit Cloud での認証エラーを避けるため「公開URL」方式で接続します
+    # Secrets の [connections.gsheets] -> spreadsheet にURLが設定されている前提です
+    conn = st.connection(
+        "gsheets", 
+        type=GSheetsConnection,
+        spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"]
+    )
     
     # スプレッドシート内の各シートを読み込み
     df_songs = conn.read(worksheet="演奏曲目")
