@@ -38,32 +38,22 @@ def ensure_col(df, target_names, fallback_val=""):
         return virtual_name
     return col
 
-def make_youtube_url(val, start_time=0):
+def make_youtube_url(base_url, start_time=0):
     """
-    ID単体、短縮URL、フルURLすべてを許容して正しい再生URLを構築する
+    ライブのベースURLと曲の開始時間を結合して、正しい再生URLを構築する
     """
-    if not val or val == "-" or str(val).lower() == "nan":
+    if not base_url or base_url == "-" or str(base_url).lower() == "nan" or base_url == "#":
         return "#"
     
-    val_str = str(val).strip()
-    
-    # すでにURL（http...）の場合は、ID部分を抽出するか、そのまま使う
-    # 最も確実なのは、IDっぽい部分を正規表現等で抜くことだが、
-    # 簡易的に、すでにURLならそのURLをベースにし、StartTimeを付与する
-    if "youtube.com" in val_str or "youtu.be" in val_str:
-        # IDを抽出
-        if "v=" in val_str:
-            yt_id = val_str.split("v=")[1].split("&")[0]
-        elif "youtu.be/" in val_str:
-            yt_id = val_str.split("youtu.be/")[1].split("?")[0]
-        else:
-            # それ以外はそのまま返して t= を付ける
-            sep = "&" if "?" in val_str else "?"
-            return f"{val_str}{sep}t={start_time}s"
-    else:
-        yt_id = val_str
+    url = str(base_url).strip()
+    try:
+        # 秒数を整数化
+        s = int(float(str(start_time).replace("-", "0")))
+    except:
+        s = 0
         
-    return f"https://www.youtube.com/watch?v={yt_id}&t={start_time}s"
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}t={s}s"
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -156,14 +146,28 @@ L_VENUE = ensure_col(df_lives, ["会場名", "会場", "Venue", "場所"])
 L_LIVE_NAME = ensure_col(df_lives, ["ライブ番号", "ID", "ライブ名", "Live", "名称"])
 L_LIVE_TITLE = ensure_col(df_lives, ["ライブ名", "Live", "公演名", "名称"])
 L_STATUS = ensure_col(df_lives, ["STATUS", "状態", "ステータス"], fallback_val="済")
+L_YT_LINK = ensure_col(df_lives, ["動画リンク", "YouTubeリンク", "URL", "リンク"], fallback_val="")
+
+# 楽曲データにライブごとの動画ベースURLを結合する
+# これにより、各曲の行でライブのベース動画URLが参照可能になる
+df_songs = df_songs.merge(
+    df_lives[[L_LIVE_NAME, L_YT_LINK]], 
+    left_on=C_LIVE_LINK, 
+    right_on=L_LIVE_NAME, 
+    how='left', 
+    suffixes=('', '_live')
+)
+C_LIVE_YT = L_YT_LINK + "_live" if L_YT_LINK in df_songs.columns else L_YT_LINK
 
 # 画面トップでのデバッグ表示 (デフォルトは閉じておく)
 with st.expander("🛠️ スプレッドシート列名デバッグ"):
     st.write("### マッピング結果 (どの列を使っているか)")
     mapping_sum = {
-        "楽曲名": C_SONG, "演奏番号/曲順": C_ORDER, "YouTubeリンク/ID": C_YT_ID, 
+        "楽曲名": C_SONG, "演奏番号/曲順": C_ORDER, 
+        "ライブ動画ベースURL(ライブ一覧)": L_YT_LINK,
+        "開始時間(演奏曲目)": C_START,
         "ライブID(演奏曲目シート)": C_LIVE_LINK,
-        "ライブ名(ライブ一覧シート)": L_LIVE_TITLE, "ライブID(ライブ一覧シート)": L_LIVE_NAME
+        "ライブ名(ライブ一覧シート)": L_LIVE_TITLE
     }
     st.table(pd.DataFrame([mapping_sum]).T.rename(columns={0: "認識された列名"}))
     
@@ -256,24 +260,20 @@ elif menu == "📅 ライブ明細検索":
             st.write("セットリスト情報がありません。")
         else:
             for _, row in live_songs.iterrows():
-                try:
-                    start = int(float(str(row[C_START]).replace("-", "0")))
-                except:
-                    start = 0
-                yt_link = make_youtube_url(row[C_YT_ID], start)
+                # ライブ一覧から取得したベースURL + 演奏曲目のSTARTTIMEでURL生成
+                yt_link = make_youtube_url(row[C_LIVE_YT], row[C_START])
                 
                 with st.container():
-                    try:
-                        raw_order = float(str(row[C_ORDER]))
-                        display_order = str(int(raw_order)) if not pd.isna(raw_order) and raw_order != 999 else "-"
-                    except:
-                        display_order = "-"
+                    # 表示形式: LiveID-Order (例: 99-1)
+                    live_id_str = str(row[C_LIVE_LINK]).split('.')[0] if '.' in str(row[C_LIVE_LINK]) else str(row[C_LIVE_LINK])
+                    order_str = str(int(row["_order_num"])) if "_order_num" in row else "-"
+                    display_label = f"{live_id_str}-{order_str}"
                         
                     link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no" style="font-size: 1.3rem;">▶️ {row[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no" style="font-size: 1.3rem;">{row[C_SONG]}</span>'
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
                         <div class="song-title" translate="no">
-                            <span class="notranslate" translate="no" style="color:#ff4b4b">{display_order}.</span> {link_html}
+                            <span class="notranslate" translate="no" style="color:#ff4b4b">{display_label}.</span> {link_html}
                         </div>
                         <div class="song-meta notranslate" translate="no">
                             Vocal: {row[C_VOCAL]} | 演奏時間: {row[C_TIME]}
@@ -317,23 +317,17 @@ elif menu == "🚀 次回演奏予定":
             for _, song in next_setlist.iterrows():
                 col1, col2 = st.columns([1, 1])
                 with col1:
-                    try:
-                        raw_order = float(str(song[C_ORDER]))
-                        display_order = str(int(raw_order)) if not pd.isna(raw_order) and raw_order != 999 else "-"
-                    except:
-                        display_order = "-"
+                    live_id_str = str(song[C_LIVE_LINK]).split('.')[0] if '.' in str(song[C_LIVE_LINK]) else str(song[C_LIVE_LINK])
+                    order_str = str(int(song["_order_num"])) if "_order_num" in song else "-"
+                    display_label = f"{live_id_str}-{order_str}"
                     
-                    try:
-                        start = int(float(str(song[C_START]).replace("-", "0")))
-                    except:
-                        start = 0
-                    yt_link = make_youtube_url(song[C_YT_ID], start)
+                    yt_link = make_youtube_url(song[C_LIVE_YT], song[C_START])
                     link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no" style="font-size: 1.2rem;">▶️ {song[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no" style="font-size: 1.2rem;">{song[C_SONG]}</span>'
                         
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
                         <div class="song-title" translate="no">
-                            <span class="notranslate" translate="no" style="color:#ff4b4b">{display_order}.</span> {link_html}
+                            <span class="notranslate" translate="no" style="color:#ff4b4b">{display_label}.</span> {link_html}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -351,11 +345,8 @@ elif menu == "🚀 次回演奏予定":
                         
                         if not past_perf.empty:
                             p_row = past_perf.iloc[0]
-                            try:
-                                p_start = int(float(str(p_row[C_START]).replace("-", "0")))
-                            except:
-                                p_start = 0
-                            p_url = make_youtube_url(p_row[C_YT_ID], p_start)
+                            # 前回演奏のYouTubeリンクも、そのライブIDに紐づく動画リンク + 引っ張ってきたSTARTTIMEで生成
+                            p_url = make_youtube_url(p_row[C_LIVE_YT], p_row[C_START])
                             st.markdown(f"**📚 前回演奏時**")
                             if p_url != "#":
                                 st.markdown(f'<div class="notranslate" translate="no"><a href="{p_url}" target="_blank" class="youtube-link">[{p_row[C_LIVE_LINK]} の映像]</a></div>', unsafe_allow_html=True)
