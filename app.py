@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 import datetime
+import urllib.parse
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -55,18 +55,29 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
-    # Service Account(PEMファイル)等のエラーを回避するため「公開URL方式」を使用します
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    # encoding='ascii' のエラーを完全に回避するため、ライブラリを介さず直接 pd.read_csv を使用します
+    # Secrets の [connections.gsheets] -> spreadsheet 列の「公開URL」または「ID」を参照
+    raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
     
-    # Secrets の [connections.gsheets] -> spreadsheet 列の「公開URL」を参照
-    public_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    # スプレッドシートIDを抽出
+    if "/d/" in raw_url:
+        spreadsheet_id = raw_url.split("/d/")[1].split("/")[0]
+    else:
+        spreadsheet_id = raw_url
     
-    # 日本語シート名も安全に読み込めるよう引数を指定
-    # 公開URL方式では st.connection 経由で read() を呼ぶのが標準
-    df_songs = conn.read(spreadsheet=public_url, worksheet="演奏曲目")
-    df_lives = conn.read(spreadsheet=public_url, worksheet="ライブ一覧")
+    # 指定されたシートをCSV形式で取得するためのURL構築
+    # gviz/tq エンドポイントを使用することで日本語シート名を確実に扱えます
+    base_csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
     
-    # 全データに対して強制的に文字列変換し、マルチバイト文字の潜在的なエンコード問題を回避
+    def get_sheet(sheet_name):
+        encoded_name = urllib.parse.quote(sheet_name)
+        url = base_csv_url + encoded_name
+        return pd.read_csv(url, encoding='utf-8')
+
+    df_songs = get_sheet("演奏曲目")
+    df_lives = get_sheet("ライブ一覧")
+    
+    # 文字列変換と欠損値処理
     for df in [df_songs, df_lives]:
         for col in df.columns:
             if df[col].dtype == 'object':
