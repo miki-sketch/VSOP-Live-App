@@ -3,6 +3,68 @@ import pandas as pd
 import datetime
 import urllib.parse
 
+# --- ユーティリティ: データ処理と防御的処理 ---
+def get_flexible_col(df, target_names, default=None):
+    """
+    dfの列名から target_names に含まれるか、あるいはそれに近い名前を探す。
+    ただし、「翻訳」という文字が含まれる列は、target自身に「翻訳」が入っていない限り避ける。
+    """
+    actual_cols = df.columns.tolist()
+    
+    # 1. 完全一致 (大文字小文字無視)
+    for target in target_names:
+        for col in actual_cols:
+            if target.lower() == col.lower():
+                return col
+                
+    # 2. 部分一致 (かつ「翻訳」を含まないものを優先)
+    for target in target_names:
+        for col in actual_cols:
+            if target in col and "翻訳" not in col:
+                return col
+                
+    # 3. それでも見つからない場合の最終手段 (「翻訳」を含んでいても良い)
+    for target in target_names:
+        for col in actual_cols:
+            if target in col:
+                return col
+    return default
+
+def ensure_col(df, target_names, fallback_val=""):
+    col = get_flexible_col(df, target_names)
+    if col is None:
+        virtual_name = target_names[0] + " (仮想)"
+        df[virtual_name] = fallback_val
+        return virtual_name
+    return col
+
+def make_youtube_url(val, start_time=0):
+    """
+    ID単体、短縮URL、フルURLすべてを許容して正しい再生URLを構築する
+    """
+    if not val or val == "-" or str(val).lower() == "nan":
+        return "#"
+    
+    val_str = str(val).strip()
+    
+    # すでにURL（http...）の場合は、ID部分を抽出するか、そのまま使う
+    # 最も確実なのは、IDっぽい部分を正規表現等で抜くことだが、
+    # 簡易的に、すでにURLならそのURLをベースにし、StartTimeを付与する
+    if "youtube.com" in val_str or "youtu.be" in val_str:
+        # IDを抽出
+        if "v=" in val_str:
+            yt_id = val_str.split("v=")[1].split("&")[0]
+        elif "youtu.be/" in val_str:
+            yt_id = val_str.split("youtu.be/")[1].split("?")[0]
+        else:
+            # それ以外はそのまま返して t= を付ける
+            sep = "&" if "?" in val_str else "?"
+            return f"{val_str}{sep}t={start_time}"
+    else:
+        yt_id = val_str
+        
+    return f"https://www.youtube.com/watch?v={yt_id}&t={start_time}s"
+
 # --- Page Configuration ---
 st.set_page_config(
     page_title="VSOP Live Dashboard",
@@ -11,78 +73,24 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- Custom CSS for Premium Design ---
+# --- Browser Translation Prevention & Custom CSS ---
 st.markdown("""
+<html lang="ja">
+<head>
+    <meta name="google" content="notranslate" />
+</head>
+</html>
 <style>
-    .main {
-        background-color: #0e1117;
-    }
-    .stMetric {
-        background-color: #1e2130;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .song-card {
-        background-color: #1e2130;
-        padding: 20px;
-        border-radius: 15px;
-        margin-bottom: 15px;
-        border-left: 5px solid #ff4b4b;
-    }
-    .song-title {
-        font-size: 1.2rem;
-        font-weight: bold;
-        color: #ffffff;
-    }
-    .song-meta {
-        font-size: 0.9rem;
-        color: #a0a0a0;
-    }
-    .youtube-link {
-        color: #ff4b4b;
-        text-decoration: none;
-        font-weight: bold;
-    }
-    .youtube-link:hover {
-        text-decoration: underline;
-    }
-    h1, h2, h3 {
-        color: #f0f2f6;
-    }
+    .main { background-color: #0e1117; }
+    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .song-card { background-color: #1e2130; padding: 20px; border-radius: 15px; margin-bottom: 15px; border-left: 5px solid #ff4b4b; }
+    .song-title { font-size: 1.2rem; font-weight: bold; color: #ffffff; }
+    .song-meta { font-size: 0.9rem; color: #a0a0a0; }
+    .youtube-link { color: #ffffff; text-decoration: none; font-weight: bold; }
+    .youtube-link:hover { text-decoration: underline; color: #ff4b4b; }
+    h1, h2, h3 { color: #f0f2f6; }
 </style>
 """, unsafe_allow_html=True)
-
-# --- ユーティリティ: 列名の柔軟なマッチングと防御的処理 ---
-def get_flexible_col(df, target_names, default=None):
-    """
-    dfの列名から target_names に含まれるか、あるいはそれに近い名前を探す。
-    見つからなかった場合は default を返す。
-    """
-    actual_cols = df.columns.tolist()
-    # 1. 完全一致 (または大文字小文字無視の一致)
-    for target in target_names:
-        for col in actual_cols:
-            if target.lower() == col.lower():
-                return col
-    
-    # 2. 部分一致 (targetが列名に含まれているか)
-    for target in target_names:
-        for col in actual_cols:
-            if target in col:
-                return col
-    return default
-
-def ensure_col(df, target_names, fallback_val=""):
-    """
-    列が見つからない場合、fallback_val で満たされた仮想列を作成して名前を返す。
-    """
-    col = get_flexible_col(df, target_names)
-    if col is None:
-        virtual_name = target_names[0] + " (仮想)"
-        df[virtual_name] = fallback_val
-        return virtual_name
-    return col
 
 # --- Data Connection ---
 def load_data():
@@ -137,7 +145,7 @@ C_TIME = ensure_col(df_songs, ["演奏時間", "演奏時間（平均）", "平�
 C_VOCAL = ensure_col(df_songs, ["ボーカル", "Vocal", "唄"])
 C_ORDER = ensure_col(df_songs, ["演奏番号", "演奏順", "No", "順序", "Order"], fallback_val="0")
 C_LIVE_LINK = ensure_col(df_songs, ["ライブ番号", "ID", "ライブ名", "Live", "公演名"]) # ライブ番号を優先
-C_YT_ID = ensure_col(df_songs, ["YOUTUBE_ID", "Youtube", "VideoID"])
+C_YT_ID = ensure_col(df_songs, ["YOUTUBE_ID", "Youtube", "VideoID", "動画ID"])
 C_START = ensure_col(df_songs, ["STARTTIME", "開始時間", "Start"], fallback_val="0")
 C_LAST = ensure_col(df_songs, ["ラスト", "前回", "Key"], fallback_val="-")
 
@@ -227,24 +235,20 @@ elif menu == "📅 ライブ明細検索":
             st.write("セットリスト情報がありません。")
         else:
             for _, row in live_songs.iterrows():
-                yt_id = row[C_YT_ID] if row[C_YT_ID] != "-" else ""
                 try:
                     start = int(float(str(row[C_START]).replace("-", "0")))
                 except:
                     start = 0
-                yt_link = f"https://youtu.be/{yt_id}?t={start}" if yt_id else "#"
+                yt_link = make_youtube_url(row[C_YT_ID], start)
                 
                 with st.container():
                     # 楽曲名にYouTubeリンクを付与
                     display_order = row[C_ORDER] if row[C_ORDER] != 999 else "-"
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link">{row[C_SONG]}</a>' if yt_link != "#" else row[C_SONG]
                     st.markdown(f"""
                     <div class="song-card">
-                        <div class="song-title">
-                            {display_order}. <a href="{yt_link}" target="_blank" style="color:white; text-decoration:none;">{row[C_SONG]}</a>
-                        </div>
-                        <div class="song-meta">
-                            Vocal: {row[C_VOCAL]} | 演奏時間: {row[C_TIME]}
-                        </div>
+                        <div class="song-title">{display_order}. {link_html}</div>
+                        <div class="song-meta">Vocal: {row[C_VOCAL]} | 演奏時間: {row[C_TIME]}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -303,14 +307,16 @@ elif menu == "🚀 次回演奏予定":
                         
                         if not past_perf.empty:
                             p_row = past_perf.iloc[0]
-                            p_yt = p_row[C_YT_ID] if p_row[C_YT_ID] != "-" else ""
                             try:
                                 p_start = int(float(str(p_row[C_START]).replace("-", "0")))
                             except:
                                 p_start = 0
-                            p_url = f"https://youtu.be/{p_yt}?t={p_start}"
+                            p_url = make_youtube_url(p_row[C_YT_ID], p_start)
                             st.markdown(f"**📚 前回演奏時**")
-                            st.markdown(f"[{p_row[C_LIVE_LINK]} の映像]({p_url})")
+                            if p_url != "#":
+                                st.markdown(f"[{p_row[C_LIVE_LINK]} の映像]({p_url})")
+                            else:
+                                st.write(f"{p_row[C_LIVE_LINK]} (映像なし)")
                         else:
                             st.write("前回演奏データなし")
                     else:
