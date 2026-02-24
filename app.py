@@ -139,28 +139,33 @@ df_songs_raw, df_lives_raw = load_data()
 df_songs = df_songs_raw.copy()
 df_lives = df_lives_raw.copy()
 
-# 画面トップでのデバッグ表示 (デフォルトは閉じておく)
-with st.expander("🛠️ スプレッドシート列名デバッグ"):
-    st.write("### 演奏曲目 シートの列名", df_songs.columns.tolist())
-    st.write("### ライブ一覧 シートの列名", df_lives.columns.tolist())
-
 # 必須列のマッピングと欠損補完
 # 1. 演奏曲目
 C_SONG = ensure_col(df_songs, ["楽曲名", "曲名", "Song"])
 C_TIME = ensure_col(df_songs, ["演奏時間", "演奏時間（平均）", "平均演奏時間", "Time"], fallback_val="0")
 C_VOCAL = ensure_col(df_songs, ["ボーカル", "Vocal", "唄"])
-C_ORDER = ensure_col(df_songs, ["演奏番号", "演奏順", "No", "順序", "Order"], fallback_val="0")
-C_LIVE_LINK = ensure_col(df_songs, ["ライブ番号", "ID", "ライブ名", "Live", "公演名"]) # ライブ番号を優先
-C_YT_ID = ensure_col(df_songs, ["YOUTUBE_ID", "Youtube", "VideoID", "動画ID"])
+C_ORDER = ensure_col(df_songs, ["演奏番号", "演奏順", "No", "順序", "Order", "演奏"], fallback_val="0")
+C_LIVE_LINK = ensure_col(df_songs, ["ライブ番号", "ID", "ライブ名", "Live", "公演名"])
+C_YT_ID = ensure_col(df_songs, ["YOUTUBE_ID", "Youtube", "VideoID", "動画ID", "YouTube"])
 C_START = ensure_col(df_songs, ["STARTTIME", "開始時間", "Start"], fallback_val="0")
 C_LAST = ensure_col(df_songs, ["ラスト", "前回", "Key"], fallback_val="-")
 
 # 2. ライブ一覧
 L_DATE = ensure_col(df_lives, ["日付", "Date", "開催日"])
 L_VENUE = ensure_col(df_lives, ["会場名", "会場", "Venue", "場所"])
-L_LIVE_NAME = ensure_col(df_lives, ["ライブ番号", "ID", "ライブ名", "Live", "名称"]) # ライブ番号を優先
-L_LIVE_TITLE = ensure_col(df_lives, ["ライブ名", "Live", "公演名", "名称"]) # 表示用の名前
+L_LIVE_NAME = ensure_col(df_lives, ["ライブ番号", "ID", "ライブ名", "Live", "名称"])
+L_LIVE_TITLE = ensure_col(df_lives, ["ライブ名", "Live", "公演名", "名称"])
 L_STATUS = ensure_col(df_lives, ["STATUS", "状態", "ステータス"], fallback_val="済")
+
+# 画面トップでのデバッグ表示 (デフォルトは閉じておく)
+with st.expander("🛠️ スプレッドシート列名デバッグ"):
+    st.write("### マッピング結果")
+    st.write({
+        "楽曲名": C_SONG, "演奏番号": C_ORDER, "YouTubeID": C_YT_ID, 
+        "ライブ名(ライブ一覧)": L_LIVE_TITLE, "ライブID(ライブ一覧)": L_LIVE_NAME
+    })
+    st.write("### 演奏曲目 シートの列名", df_songs.columns.tolist())
+    st.write("### ライブ一覧 シートの列名", df_lives.columns.tolist())
 
 # --- Sidebar Navigation ---
 st.sidebar.title("VSOP Live Dashboard")
@@ -226,15 +231,19 @@ elif menu == "📅 ライブ明細検索":
         
         st.divider()
         st.header(f"🎸 {selected_live[L_VENUE]}")
-        st.info(f"開催日: {selected_live[L_DATE]} | {selected_live[L_LIVE_TITLE]}")
+        st.markdown(f"""
+        <div class="notranslate" translate="no" style="background-color: #1e2130; padding: 10px; border-radius: 5px; color: #a0a0a0;">
+            開催日: {selected_live[L_DATE]} | ライブ名: {selected_live[L_LIVE_TITLE]}
+        </div>
+        """, unsafe_allow_html=True)
         
         # セットリスト抽出 (ライブ番号/IDで紐付け)
         live_songs = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_live[L_LIVE_NAME])].copy()
         
-        # 演奏番号でソート
+        # 演奏番号でソート (文字列から数値へ変換を試みる)
         if "(仮想)" not in C_ORDER:
-            # 数字としてソートを試みる
-            live_songs[C_ORDER] = pd.to_numeric(live_songs[C_ORDER], errors='coerce').fillna(999)
+            # 一旦文字列にしてから、数値以外の文字を除去、その後数値変換
+            live_songs[C_ORDER] = live_songs[C_ORDER].astype(str).str.extract('(\d+)').fillna(999).astype(int)
             live_songs = live_songs.sort_values(C_ORDER)
         
         if live_songs.empty:
@@ -255,7 +264,7 @@ elif menu == "📅 ライブ明細検索":
                     except:
                         display_order = "-"
                         
-                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">{row[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{row[C_SONG]}</span>'
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">▶️ {row[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{row[C_SONG]}</span>'
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
                         <div class="song-title" translate="no">
@@ -291,10 +300,11 @@ elif menu == "🚀 次回演奏予定":
         # セットリスト抽出
         next_setlist = df_songs[df_songs[C_LIVE_LINK].astype(str) == str(selected_id)].copy()
         if "(仮想)" not in C_ORDER:
-            next_setlist[C_ORDER] = pd.to_numeric(next_setlist[C_ORDER], errors='coerce').fillna(999)
+            # 文字列から数値を抽出してソート
+            next_setlist[C_ORDER] = next_setlist[C_ORDER].astype(str).str.extract('(\d+)').fillna(999).astype(int)
             next_setlist = next_setlist.sort_values(C_ORDER)
         
-        st.header(f"📝 Setlist: {selected_title}")
+        st.markdown(f'<h2 class="notranslate" translate="no">📝 Setlist: {selected_title}</h2>', unsafe_allow_html=True)
         
         if next_setlist.empty:
             st.write("このライブのセットリストはまだ登録されていません。")
@@ -313,7 +323,7 @@ elif menu == "🚀 次回演奏予定":
                     except:
                         start = 0
                     yt_link = make_youtube_url(song[C_YT_ID], start)
-                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">{song[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{song[C_SONG]}</span>'
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">▶️ {song[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{song[C_SONG]}</span>'
                         
                     st.markdown(f"""
                     <div class="song-card notranslate" translate="no">
@@ -343,7 +353,7 @@ elif menu == "🚀 次回演奏予定":
                             p_url = make_youtube_url(p_row[C_YT_ID], p_start)
                             st.markdown(f"**📚 前回演奏時**")
                             if p_url != "#":
-                                st.markdown(f"[{p_row[C_LIVE_LINK]} の映像]({p_url})")
+                                st.markdown(f'<div class="notranslate" translate="no"><a href="{p_url}" target="_blank" class="youtube-link">[{p_row[C_LIVE_LINK]} の映像]</a></div>', unsafe_allow_html=True)
                             else:
                                 st.write(f"{p_row[C_LIVE_LINK]} (映像なし)")
                         else:
@@ -352,4 +362,4 @@ elif menu == "🚀 次回演奏予定":
                         st.write("-")
 
 st.sidebar.divider()
-st.sidebar.caption("© 2024 VSOP Live Support System")
+st.sidebar.caption("© 2026 VSOP Live Support System")
