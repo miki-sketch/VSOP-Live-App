@@ -59,7 +59,7 @@ def make_youtube_url(val, start_time=0):
         else:
             # それ以外はそのまま返して t= を付ける
             sep = "&" if "?" in val_str else "?"
-            return f"{val_str}{sep}t={start_time}"
+            return f"{val_str}{sep}t={start_time}s"
     else:
         yt_id = val_str
         
@@ -75,21 +75,27 @@ st.set_page_config(
 
 # --- Browser Translation Prevention & Custom CSS ---
 st.markdown("""
-<html lang="ja">
-<head>
-    <meta name="google" content="notranslate" />
-</head>
-</html>
+<html class="notranslate" google="notranslate">
 <style>
+    /* ブラウザ翻訳を無効化するスタイル */
+    .main, .stApp, div, span, a {
+        unicode-bidi: isolate;
+    }
     .main { background-color: #0e1117; }
     .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     .song-card { background-color: #1e2130; padding: 20px; border-radius: 15px; margin-bottom: 15px; border-left: 5px solid #ff4b4b; }
     .song-title { font-size: 1.2rem; font-weight: bold; color: #ffffff; }
     .song-meta { font-size: 0.9rem; color: #a0a0a0; }
-    .youtube-link { color: #ffffff; text-decoration: none; font-weight: bold; }
-    .youtube-link:hover { text-decoration: underline; color: #ff4b4b; }
+    .youtube-link { color: #ffffff !important; text-decoration: none !important; font-weight: bold; }
+    .youtube-link:hover { text-decoration: underline !important; color: #ff4b4b !important; }
     h1, h2, h3 { color: #f0f2f6; }
 </style>
+</html>
+<script>
+    // ブラウザ翻訳を抑制するためのダミー属性付与
+    document.documentElement.className += ' notranslate';
+    document.documentElement.setAttribute('translate', 'no');
+</script>
 """, unsafe_allow_html=True)
 
 # --- Data Connection ---
@@ -242,13 +248,22 @@ elif menu == "📅 ライブ明細検索":
                 yt_link = make_youtube_url(row[C_YT_ID], start)
                 
                 with st.container():
-                    # 楽曲名にYouTubeリンクを付与
-                    display_order = row[C_ORDER] if row[C_ORDER] != 999 else "-"
-                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link">{row[C_SONG]}</a>' if yt_link != "#" else row[C_SONG]
+                    # 数値として確実に表示 (ブラウザが . を勝手に翻訳して 。 にするのを防ぐ)
+                    try:
+                        raw_order = float(str(row[C_ORDER]))
+                        display_order = str(int(raw_order)) if not pd.isna(raw_order) and raw_order != 999 else "-"
+                    except:
+                        display_order = "-"
+                        
+                    link_html = f'<a href="{yt_link}" target="_blank" class="youtube-link notranslate" translate="no">{row[C_SONG]}</a>' if yt_link != "#" else f'<span class="notranslate" translate="no">{row[C_SONG]}</span>'
                     st.markdown(f"""
-                    <div class="song-card">
-                        <div class="song-title">{display_order}. {link_html}</div>
-                        <div class="song-meta">Vocal: {row[C_VOCAL]} | 演奏時間: {row[C_TIME]}</div>
+                    <div class="song-card notranslate" translate="no">
+                        <div class="song-title" translate="no">
+                            <span class="notranslate" translate="no">{display_order}.</span> {link_html}
+                        </div>
+                        <div class="song-meta notranslate" translate="no">
+                            Vocal: {row[C_VOCAL]} | 演奏時間: {row[C_TIME]}
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -287,10 +302,17 @@ elif menu == "🚀 次回演奏予定":
             for _, song in next_setlist.iterrows():
                 col1, col2 = st.columns([1, 1])
                 with col1:
-                    display_order = song[C_ORDER] if song[C_ORDER] != 999 else "-"
+                    try:
+                        raw_order = float(str(song[C_ORDER]))
+                        display_order = str(int(raw_order)) if not pd.isna(raw_order) and raw_order != 999 else "-"
+                    except:
+                        display_order = "-"
+                        
                     st.markdown(f"""
-                    <div class="song-card">
-                        <div class="song-title">{display_order}. {song[C_SONG]}</div>
+                    <div class="song-card notranslate" translate="no">
+                        <div class="song-title" translate="no">
+                            <span class="notranslate" translate="no">{display_order}.</span> {song[C_SONG]}
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
                 
