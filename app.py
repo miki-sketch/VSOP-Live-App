@@ -53,20 +53,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- ユーティリティ: 列名の柔軟なマッチング ---
+def get_flexible_col(df, target_names):
+    """
+    dfの列名から target_names (リスト) に含まれるか、あるいはそれに近い名前を探す
+    """
+    actual_cols = df.columns.tolist()
+    # 1. 完全一致 (または strip後の一致)
+    for target in target_names:
+        if target in actual_cols:
+            return target
+    
+    # 2. 部分一致 (targetが列名に含まれているか、列名がtargetに含まれているか)
+    for target in target_names:
+        for col in actual_cols:
+            if target in col or col in target:
+                return col
+    return None
+
 # --- Data Connection ---
 def load_data():
-    # encoding='ascii' のエラーを完全に回避するため、ライブラリを介さず直接 pd.read_csv を使用します
-    # Secrets の [connections.gsheets] -> spreadsheet 列の「公開URL」または「ID」を参照
     raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    
-    # スプレッドシートIDを抽出
     if "/d/" in raw_url:
         spreadsheet_id = raw_url.split("/d/")[1].split("/")[0]
     else:
         spreadsheet_id = raw_url
     
-    # 指定されたシートをCSV形式で取得するためのURL構築
-    # gviz/tq エンドポイントを使用することで日本語シート名を確実に扱えます
     base_csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet="
     
     def get_sheet(sheet_name):
@@ -77,16 +89,15 @@ def load_data():
     df_songs = get_sheet("演奏曲目")
     df_lives = get_sheet("ライブ一覧")
     
-    # 文字列変換と欠損値処理、および列名のクリーニング
+    # 列名のクリーニング
+    df_songs.columns = [c.strip() for c in df_songs.columns]
+    df_lives.columns = [c.strip() for c in df_lives.columns]
+    
+    # 全データに対して強制的に文字列変換
     for df in [df_songs, df_lives]:
-        # 列名の前後空白を削除 (KeyError対策)
-        df.columns = [c.strip() for c in df.columns]
         for col in df.columns:
             if df[col].dtype == 'object':
                 df[col] = df[col].astype(str).fillna("-")
-    
-    if 'STARTTIME' in df_songs.columns:
-        df_songs['STARTTIME'] = pd.to_numeric(df_songs['STARTTIME'], errors='coerce').fillna(0).astype(int)
     
     return df_songs, df_lives
 
@@ -94,15 +105,16 @@ def load_data():
 try:
     df_songs, df_lives = load_data()
     
-    # デバッグ情報の表示 (ユーザーからの要望)
-    with st.sidebar.expander("🛠️ データデバッグ情報"):
-        st.write("演奏曲目 列名:", df_songs.columns.tolist())
-        st.write("ライブ一覧 列名:", df_lives.columns.tolist())
-        st.write("楽曲一覧 プレビュー:", df_songs.head(3))
+    # 画面トップでのデバッグ表示 (KeyError解決用)
+    with st.expander("🛠️ 【デバッグ】スプレッドシートの列名を確認する"):
+        st.write("### 演奏曲目 シートの列名")
+        st.write(df_songs.columns.tolist())
+        st.write("### ライブ一覧 シートの列名")
+        st.write(df_lives.columns.tolist())
+        st.info("※列名が合わない場合は、以下のロジックで自動的にマッチングを試みています。")
 
 except Exception as e:
     st.error(f"データ読み込みエラー: {e}")
-    st.info("Secretsの設定を確認してください。")
     st.stop()
 
 # --- Sidebar Navigation ---
@@ -113,20 +125,20 @@ menu = st.sidebar.radio("メニュー", ["🏠 楽曲一覧・分析", "📅 ラ
 if menu == "🏠 楽曲一覧・分析":
     st.title("🎵 楽曲ランキング & 分析")
     
-    # 必須列の存在確認と防御的処理
-    required_cols = ['楽曲名', '演奏時間（平均）', 'ボーカル']
-    missing_cols = [c for c in required_cols if c not in df_songs.columns]
+    # 列名の柔軟な取得
+    col_song = get_flexible_col(df_songs, ["楽曲名", "曲名", "Song"])
+    col_time = get_flexible_col(df_songs, ["演奏時間（平均）", "平均演奏時間", "演奏時間", "Time"])
+    col_vocal = get_flexible_col(df_songs, ["ボーカル", "Vocal", "唄"])
     
-    if missing_cols:
-        st.error(f"以下の列がスプレッドシートに見つかりません: {', '.join(missing_cols)}")
-        st.info("サイドバーの『データデバッグ情報』で実際の列名を確認してください。")
+    if not all([col_song, col_time, col_vocal]):
+        st.error(f"必須列が見つかりません。デバッグ情報を確認してください。(楽曲名:{col_song}, 演奏時間:{col_time}, ボーカル:{col_vocal})")
     else:
         # 楽曲ごとの集計
-        song_stats = df_songs.groupby('楽曲名').agg({
-            '演奏時間（平均）': 'first',
-            'ボーカル': 'first',
-            '楽曲名': 'count'
-        }).rename(columns={'楽曲名': '演奏合計回数'}).reset_index()
+        song_stats = df_songs.groupby(col_song).agg({
+            col_time: 'first',
+            col_vocal: 'first',
+            col_song: 'count'
+        }).rename(columns={col_song: '演奏合計回数'}).reset_index()
         
         song_stats = song_stats.sort_values('演奏合計回数', ascending=False)
         
@@ -134,12 +146,12 @@ if menu == "🏠 楽曲一覧・分析":
         col1.metric("総楽曲数", len(song_stats))
         
         if not song_stats.empty:
-            col2.metric("最多演奏曲", song_stats.iloc[0]['楽曲名'])
+            col2.metric("最多演奏曲", song_stats.iloc[0][col_song])
             col3.metric("最大演奏回数", song_stats.iloc[0]['演奏合計回数'])
         
         st.subheader("演奏回数ランキング")
         st.dataframe(
-            song_stats[['楽曲名', '演奏合計回数', '演奏時間（平均）', 'ボーカル']],
+            song_stats[[col_song, '演奏合計回数', col_time, col_vocal]],
             use_container_width=True,
             hide_index=True
         )
@@ -148,116 +160,130 @@ if menu == "🏠 楽曲一覧・分析":
 elif menu == "📅 ライブ明細検索":
     st.title("📅 過去のライブを探す")
     
-    # 検索フィルター (日本語エンコードエラー回避のため簡略化)
-    search_query = st.text_input("会場名や年月で検索 (部分一致)")
+    col_date = get_flexible_col(df_lives, ["日付", "Date", "開催日"])
+    col_venue = get_flexible_col(df_lives, ["会場名", "会場", "Venue", "場所"])
+    col_live_name = get_flexible_col(df_lives, ["ライブ名", "Live", "名称"])
     
-    filtered_lives = df_lives.copy()
-    if search_query:
-        # 複数の列を個別に検索して結合（applyを避けて安全に）
-        mask = (
-            filtered_lives['会場名'].astype(str).str.contains(search_query, case=False, na=False) |
-            filtered_lives['日付'].astype(str).str.contains(search_query, case=False, na=False)
-        )
-        filtered_lives = filtered_lives[mask]
-    
-    if filtered_lives.empty:
-        st.warning("条件に一致するライブが見つかりません。")
+    if not all([col_date, col_venue, col_live_name]):
+        st.error(f"『ライブ一覧』に必要な列が見つかりません。(日付:{col_date}, 会場:{col_venue}, ライブ名:{col_live_name})")
     else:
-        # 防御的に列を確認
-        if '日付' in filtered_lives.columns and '会場名' in filtered_lives.columns:
-            filtered_lives['label'] = filtered_lives['日付'].astype(str) + " @ " + filtered_lives['会場名'].astype(str)
+        search_query = st.text_input("会場名や年月で検索 (部分一致)")
+        
+        filtered_lives = df_lives.copy()
+        if search_query:
+            mask = (
+                filtered_lives[col_venue].astype(str).str.contains(search_query, case=False, na=False) |
+                filtered_lives[col_date].astype(str).str.contains(search_query, case=False, na=False)
+            )
+            filtered_lives = filtered_lives[mask]
+        
+        if filtered_lives.empty:
+            st.warning("条件に一致するライブが見つかりません。")
+        else:
+            filtered_lives['label'] = filtered_lives[col_date].astype(str) + " @ " + filtered_lives[col_venue].astype(str)
             live_options = filtered_lives['label'].tolist()
             selected_live_str = st.selectbox("ライブを選択してください", live_options)
             
-            # 選択されたライブの情報を特定
             selected_live = filtered_lives[filtered_lives['label'] == selected_live_str].iloc[0]
-        else:
-            st.error("『ライブ一覧』シートに『日付』または『会場名』列が見つかりません。")
-            st.stop()
-        
-        st.divider()
-        st.header(f"🎸 {selected_live['会場名']}")
-        st.info(f"開催日: {selected_live['日付']}")
-        
-        # 該当ライブのセットリストを抽出
-        # ライブ名またはIDで紐付け（ここでは仮に「ライブ名」で紐付け）
-        live_songs = df_songs[df_songs['ライブ名'] == selected_live['ライブ名']].sort_values('演奏順')
-        
-        if live_songs.empty:
-            st.write("セットリスト情報がありません。")
-        else:
-            for _, row in live_songs.iterrows():
-                youtube_id = row.get('YOUTUBE_ID', '') # YOUTUBE_ID列がある想定
-                starttime = row.get('STARTTIME', 0)
-                yt_link = f"https://youtu.be/{youtube_id}?t={starttime}" if youtube_id else "#"
-                
-                with st.container():
-                    st.markdown(f"""
-                    <div class="song-card">
-                        <div class="song-title">{row['演奏順']}. {row['楽曲名']}</div>
-                        <div class="song-meta">Vocal: {row['ボーカル']} | 演奏時間: {row.get('演奏時間', '不明')}</div>
-                        <a href="{yt_link}" target="_blank" class="youtube-link">▶️ YouTubeで再生 ({starttime}秒から)</a>
-                    </div>
-                    """, unsafe_allow_html=True)
+            
+            st.divider()
+            st.header(f"🎸 {selected_live[col_venue]}")
+            st.info(f"開催日: {selected_live[col_date]}")
+            
+            # セットリスト表示用の列
+            col_song_s = get_flexible_col(df_songs, ["楽曲名", "曲名"])
+            col_order = get_flexible_col(df_songs, ["演奏順", "No", "順序"])
+            col_live_link = get_flexible_col(df_songs, ["ライブ名", "Live"])
+            
+            live_songs = df_songs[df_songs[col_live_link] == selected_live[col_live_name]]
+            if col_order:
+                live_songs = live_songs.sort_values(col_order)
+            
+            if live_songs.empty:
+                st.write("セットリスト情報がありません。")
+            else:
+                for _, row in live_songs.iterrows():
+                    yt_id = row.get('YOUTUBE_ID', '')
+                    start = row.get('STARTTIME', 0)
+                    try:
+                        start = int(float(start))
+                    except:
+                        start = 0
+                    yt_link = f"https://youtu.be/{yt_id}?t={start}" if yt_id else "#"
+                    
+                    with st.container():
+                        st.markdown(f"""
+                        <div class="song-card">
+                            <div class="song-title">{row.get(col_order, '')}. {row[col_song_s]}</div>
+                            <div class="song-meta">Vocal: {row.get('ボーカル', '-')}</div>
+                            <a href="{yt_link}" target="_blank" class="youtube-link">▶️ YouTubeで再生 ({start}秒から)</a>
+                        </div>
+                        """, unsafe_allow_html=True)
 
 # --- 3. 次回演奏予定 ---
 elif menu == "🚀 次回演奏予定":
     st.title("🚀 Next Performance Info")
     
-    # STATUSが「未」のものを抽出
-    upcoming_lives = df_lives[df_lives['STATUS'] == '未'].sort_values('日付')
+    col_status = get_flexible_col(df_lives, ["STATUS", "状態", "ステータス"])
+    col_date = get_flexible_col(df_lives, ["日付", "Date"])
+    col_live_name = get_flexible_col(df_lives, ["ライブ名", "Live"])
+    col_venue = get_flexible_col(df_lives, ["会場名", "Venue"])
     
-    if upcoming_lives.empty:
-        st.success("現在、予定されているライブはありません。")
+    if not col_status:
+        st.error("『STATUS』列が見つかりません。")
     else:
-        st.subheader("次回ライブ予定一覧")
-        st.dataframe(
-            upcoming_lives[['日付', 'ライブ名', '会場名']],
-            use_container_width=True,
-            hide_index=True
-        )
+        upcoming_lives = df_lives[df_lives[col_status].astype(str).str.contains('未', na=False)]
+        if col_date:
+            upcoming_lives = upcoming_lives.sort_values(col_date)
         
-        selected_next = st.selectbox("詳細を見るライブ", upcoming_lives['ライブ名'].tolist())
-        
-        # 次回ライブのセットリスト
-        next_setlist = df_songs[df_songs['ライブ名'] == selected_next].sort_values('演奏順')
-        
-        st.header(f"📝 Setlist: {selected_next}")
-        
-        for _, song in next_setlist.iterrows():
-            col1, col2 = st.columns([1, 1])
+        if upcoming_lives.empty:
+            st.success("現在、予定されているライブはありません。")
+        else:
+            display_cols = [c for c in [col_date, col_live_name, col_venue] if c]
+            st.subheader("次回ライブ予定一覧")
+            st.dataframe(upcoming_lives[display_cols], use_container_width=True, hide_index=True)
             
-            with col1:
-                st.markdown(f"""
-                <div class="song-card">
-                    <div class="song-title">{song['演奏順']}. {song['楽曲名']}</div>
-                    <div class="song-meta">Vocal: {song['ボーカル']}</div>
-                </div>
-                """, unsafe_allow_html=True)
+            selected_next = st.selectbox("詳細を見るライブ", upcoming_lives[col_live_name].tolist())
             
-            with col2:
-                # 予習用動画の検索
-                last_key = str(song.get('ラスト', ''))
-                if last_key and last_key != 'nan':
-                    # 同一シート（df_songs）内の過去の同じ演奏番号を検索
-                    # 自分自身（今回のライブ）を除外
-                    past_perf = df_songs[
-                        (df_songs['ラスト'].astype(str) == last_key) & 
-                        (df_songs['ライブ名'] != selected_next)
-                    ].iloc[:1] # 最初に見つかった1件
-                    
-                    if not past_perf.empty:
-                        past_row = past_perf.iloc[0]
-                        past_yt_id = past_row.get('YOUTUBE_ID', '')
-                        past_start = past_row.get('STARTTIME', 0)
-                        past_yt_url = f"https://youtu.be/{past_yt_id}?t={past_start}"
+            col_live_link = get_flexible_col(df_songs, ["ライブ名", "Live"])
+            col_order = get_flexible_col(df_songs, ["演奏順", "No"])
+            col_song_name = get_flexible_col(df_songs, ["楽曲名", "曲名"])
+            col_last = get_flexible_col(df_songs, ["ラスト", "演奏番号", "Key"])
+            
+            next_setlist = df_songs[df_songs[col_live_link] == selected_next]
+            if col_order:
+                next_setlist = next_setlist.sort_values(col_order)
+            
+            st.header(f"📝 Setlist: {selected_next}")
+            
+            for _, song in next_setlist.iterrows():
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.markdown(f"""
+                    <div class="song-card">
+                        <div class="song-title">{song.get(col_order, '')}. {song[col_song_name]}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    last_val = str(song.get(col_last, ''))
+                    if col_last and last_val and last_val != 'nan' and last_val != '-':
+                        past_perf = df_songs[
+                            (df_songs[col_last].astype(str) == last_val) & 
+                            (df_songs[col_live_link] != selected_next)
+                        ].head(1)
                         
-                        st.markdown(f"**📚 前回演奏時 (予習用)**")
-                        st.markdown(f"[{past_row['ライブ名']} の映像]({past_yt_url})")
+                        if not past_perf.empty:
+                            p_row = past_perf.iloc[0]
+                            p_yt = p_row.get('YOUTUBE_ID', '')
+                            p_start = p_row.get('STARTTIME', 0)
+                            p_url = f"https://youtu.be/{p_yt}?t={p_start}"
+                            st.markdown(f"**📚 前回演奏時**")
+                            st.markdown(f"[{p_row[col_live_link]} の映像]({p_url})")
+                        else:
+                            st.write("前回演奏データなし")
                     else:
-                        st.write("前回演奏データなし")
-                else:
-                    st.write("-")
+                        st.write("-")
 
 st.sidebar.divider()
 st.sidebar.caption("© 2024 VSOP Live Support System")
