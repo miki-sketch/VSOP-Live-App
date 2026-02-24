@@ -55,12 +55,12 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
-    # Streamlit Cloud での認証エラーを避けるため「公開URL」方式で接続します
-    # Secrets の [connections.gsheets] -> spreadsheet にURLが設定されている前提です
+    # Secrets の [connections.gsheets] -> spreadsheet_id を参照します
+    # 公開URLまたはシートIDを使用して接続します
     conn = st.connection(
         "gsheets", 
         type=GSheetsConnection,
-        spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"]
+        spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet_id"]
     )
     
     # スプレッドシート内の各シートを読み込み
