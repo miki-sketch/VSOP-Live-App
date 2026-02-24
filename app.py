@@ -55,17 +55,16 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
+    # Streamlit Cloud での認証エラーを避けるため、st.connection での引数指定を最小限にし
+    # conn.read() 側で spreadsheet 引数を指定する方式に修正します
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    
     # Secrets の [connections.gsheets] -> spreadsheet_id を参照します
-    # 公開URLまたはシートIDを使用して接続します
-    conn = st.connection(
-        "gsheets", 
-        type=GSheetsConnection,
-        spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet_id"]
-    )
+    target_spreadsheet = st.secrets["connections"]["gsheets"]["spreadsheet_id"]
     
     # スプレッドシート内の各シートを読み込み
-    df_songs = conn.read(worksheet="演奏曲目")
-    df_lives = conn.read(worksheet="ライブ一覧")
+    df_songs = conn.read(spreadsheet=target_spreadsheet, worksheet="演奏曲目")
+    df_lives = conn.read(spreadsheet=target_spreadsheet, worksheet="ライブ一覧")
     
     # 型変換などの前処理
     if 'STARTTIME' in df_songs.columns:
