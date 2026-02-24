@@ -77,8 +77,10 @@ def load_data():
     df_songs = get_sheet("演奏曲目")
     df_lives = get_sheet("ライブ一覧")
     
-    # 文字列変換と欠損値処理
+    # 文字列変換と欠損値処理、および列名のクリーニング
     for df in [df_songs, df_lives]:
+        # 列名の前後空白を削除 (KeyError対策)
+        df.columns = [c.strip() for c in df.columns]
         for col in df.columns:
             if df[col].dtype == 'object':
                 df[col] = df[col].astype(str).fillna("-")
@@ -88,11 +90,19 @@ def load_data():
     
     return df_songs, df_lives
 
+# --- データ読み込みとデバッグ表示 ---
 try:
     df_songs, df_lives = load_data()
+    
+    # デバッグ情報の表示 (ユーザーからの要望)
+    with st.sidebar.expander("🛠️ データデバッグ情報"):
+        st.write("演奏曲目 列名:", df_songs.columns.tolist())
+        st.write("ライブ一覧 列名:", df_lives.columns.tolist())
+        st.write("楽曲一覧 プレビュー:", df_songs.head(3))
+
 except Exception as e:
     st.error(f"データ読み込みエラー: {e}")
-    st.info("st.secrets に Google Cloud サービスアカウント情報とスプレッドシートの接続情報が正しく設定されているか確認してください。")
+    st.info("Secretsの設定を確認してください。")
     st.stop()
 
 # --- Sidebar Navigation ---
@@ -103,26 +113,36 @@ menu = st.sidebar.radio("メニュー", ["🏠 楽曲一覧・分析", "📅 ラ
 if menu == "🏠 楽曲一覧・分析":
     st.title("🎵 楽曲ランキング & 分析")
     
-    # 楽曲ごとの集計
-    song_stats = df_songs.groupby('楽曲名').agg({
-        '演奏時間（平均）': 'first',
-        'ボーカル': 'first',
-        '楽曲名': 'count'
-    }).rename(columns={'楽曲名': '演奏合計回数'}).reset_index()
+    # 必須列の存在確認と防御的処理
+    required_cols = ['楽曲名', '演奏時間（平均）', 'ボーカル']
+    missing_cols = [c for c in required_cols if c not in df_songs.columns]
     
-    song_stats = song_stats.sort_values('演奏合計回数', ascending=False)
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("総楽曲数", len(song_stats))
-    col2.metric("最多演奏曲", song_stats.iloc[0]['楽曲名'])
-    col3.metric("最大演奏回数", song_stats.iloc[0]['演奏合計回数'])
-    
-    st.subheader("演奏回数ランキング")
-    st.dataframe(
-        song_stats[['楽曲名', '演奏合計回数', '演奏時間（平均）', 'ボーカル']],
-        use_container_width=True,
-        hide_index=True
-    )
+    if missing_cols:
+        st.error(f"以下の列がスプレッドシートに見つかりません: {', '.join(missing_cols)}")
+        st.info("サイドバーの『データデバッグ情報』で実際の列名を確認してください。")
+    else:
+        # 楽曲ごとの集計
+        song_stats = df_songs.groupby('楽曲名').agg({
+            '演奏時間（平均）': 'first',
+            'ボーカル': 'first',
+            '楽曲名': 'count'
+        }).rename(columns={'楽曲名': '演奏合計回数'}).reset_index()
+        
+        song_stats = song_stats.sort_values('演奏合計回数', ascending=False)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("総楽曲数", len(song_stats))
+        
+        if not song_stats.empty:
+            col2.metric("最多演奏曲", song_stats.iloc[0]['楽曲名'])
+            col3.metric("最大演奏回数", song_stats.iloc[0]['演奏合計回数'])
+        
+        st.subheader("演奏回数ランキング")
+        st.dataframe(
+            song_stats[['楽曲名', '演奏合計回数', '演奏時間（平均）', 'ボーカル']],
+            use_container_width=True,
+            hide_index=True
+        )
 
 # --- 2. ライブ明細検索 ---
 elif menu == "📅 ライブ明細検索":
@@ -143,13 +163,17 @@ elif menu == "📅 ライブ明細検索":
     if filtered_lives.empty:
         st.warning("条件に一致するライブが見つかりません。")
     else:
-        # ライブ選択 (apply+lambdaを避け、ベクトル演算で結合することでエンコードエラーを回避)
-        filtered_lives['label'] = filtered_lives['日付'].astype(str) + " @ " + filtered_lives['会場名'].astype(str)
-        live_options = filtered_lives['label'].tolist()
-        selected_live_str = st.selectbox("ライブを選択してください", live_options)
-        
-        # 選択されたライブの情報を特定
-        selected_live = filtered_lives[filtered_lives['label'] == selected_live_str].iloc[0]
+        # 防御的に列を確認
+        if '日付' in filtered_lives.columns and '会場名' in filtered_lives.columns:
+            filtered_lives['label'] = filtered_lives['日付'].astype(str) + " @ " + filtered_lives['会場名'].astype(str)
+            live_options = filtered_lives['label'].tolist()
+            selected_live_str = st.selectbox("ライブを選択してください", live_options)
+            
+            # 選択されたライブの情報を特定
+            selected_live = filtered_lives[filtered_lives['label'] == selected_live_str].iloc[0]
+        else:
+            st.error("『ライブ一覧』シートに『日付』または『会場名』列が見つかりません。")
+            st.stop()
         
         st.divider()
         st.header(f"🎸 {selected_live['会場名']}")
