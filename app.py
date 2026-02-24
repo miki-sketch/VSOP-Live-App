@@ -55,21 +55,22 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
-    # Service Accountのエラーを回避するため「公開URL方式」を使用します
+    # Service Account(PEMファイル)等のエラーを回避するため「公開URL方式」を使用します
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Secrets の [connections.gsheets] -> spreadsheet 列の「公開URL」を参照します
+    # Secrets の [connections.gsheets] -> spreadsheet 列の「公開URL」を参照
     public_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
     
-    # スプレッドシート内の各シートを公開URL経由で読み込み
+    # 日本語シート名も安全に読み込めるよう引数を指定
+    # 公開URL方式では st.connection 経由で read() を呼ぶのが標準
     df_songs = conn.read(spreadsheet=public_url, worksheet="演奏曲目")
     df_lives = conn.read(spreadsheet=public_url, worksheet="ライブ一覧")
     
-    # 型変換と日本語エンコード対策（文字列として処理）
+    # 全データに対して強制的に文字列変換し、マルチバイト文字の潜在的なエンコード問題を回避
     for df in [df_songs, df_lives]:
         for col in df.columns:
             if df[col].dtype == 'object':
-                df[col] = df[col].fillna("-")
+                df[col] = df[col].astype(str).fillna("-")
     
     if 'STARTTIME' in df_songs.columns:
         df_songs['STARTTIME'] = pd.to_numeric(df_songs['STARTTIME'], errors='coerce').fillna(0).astype(int)
@@ -131,13 +132,13 @@ elif menu == "📅 ライブ明細検索":
     if filtered_lives.empty:
         st.warning("条件に一致するライブが見つかりません。")
     else:
-        # ライブ選択
-        live_options = filtered_lives.apply(lambda x: f"{x['日付']} @ {x['会場名']}", axis=1).tolist()
+        # ライブ選択 (apply+lambdaを避け、ベクトル演算で結合することでエンコードエラーを回避)
+        filtered_lives['label'] = filtered_lives['日付'].astype(str) + " @ " + filtered_lives['会場名'].astype(str)
+        live_options = filtered_lives['label'].tolist()
         selected_live_str = st.selectbox("ライブを選択してください", live_options)
         
         # 選択されたライブの情報を特定
-        selected_live_idx = live_options.index(selected_live_str)
-        selected_live = filtered_lives.iloc[selected_live_idx]
+        selected_live = filtered_lives[filtered_lives['label'] == selected_live_str].iloc[0]
         
         st.divider()
         st.header(f"🎸 {selected_live['会場名']}")
