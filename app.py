@@ -55,16 +55,16 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
-    # Streamlit Cloud での認証エラーを避けるため、st.connection での引数指定を最小限にし
-    # conn.read() 側で spreadsheet 引数を指定する方式に修正します
+    # Service Account(PEMファイル)のエラーを回避するため、完全に「公開URL方式」に切り替えます
+    # st.connection 側では認証情報を指定せず、conn.read 時に公開URLを渡します
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Secrets の [connections.gsheets] -> spreadsheet_id を参照します
-    target_spreadsheet = st.secrets["connections"]["gsheets"]["spreadsheet_id"]
+    # Secrets の [connections.gsheets] -> spreadsheet_id 列には「公開URL」が保存されている想定です
+    public_url = st.secrets["connections"]["gsheets"]["spreadsheet_id"]
     
-    # スプレッドシート内の各シートを読み込み
-    df_songs = conn.read(spreadsheet=target_spreadsheet, worksheet="演奏曲目")
-    df_lives = conn.read(spreadsheet=target_spreadsheet, worksheet="ライブ一覧")
+    # スプレッドシート内の各シートを公開URL経由で読み込み
+    df_songs = conn.read(spreadsheet=public_url, worksheet="演奏曲目")
+    df_lives = conn.read(spreadsheet=public_url, worksheet="ライブ一覧")
     
     # 型変換などの前処理
     if 'STARTTIME' in df_songs.columns:
