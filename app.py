@@ -55,18 +55,22 @@ st.markdown("""
 
 # --- Data Connection ---
 def load_data():
-    # Service Account(PEMファイル)のエラーを回避するため、完全に「公開URL方式」に切り替えます
-    # st.connection 側では認証情報を指定せず、conn.read 時に公開URLを渡します
+    # Service Accountのエラーを回避するため「公開URL方式」を使用します
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Secrets の [connections.gsheets] -> spreadsheet_id 列には「公開URL」が保存されている想定です
-    public_url = st.secrets["connections"]["gsheets"]["spreadsheet_id"]
+    # Secrets の [connections.gsheets] -> spreadsheet 列の「公開URL」を参照します
+    public_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
     
     # スプレッドシート内の各シートを公開URL経由で読み込み
     df_songs = conn.read(spreadsheet=public_url, worksheet="演奏曲目")
     df_lives = conn.read(spreadsheet=public_url, worksheet="ライブ一覧")
     
-    # 型変換などの前処理
+    # 型変換と日本語エンコード対策（文字列として処理）
+    for df in [df_songs, df_lives]:
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].fillna("-")
+    
     if 'STARTTIME' in df_songs.columns:
         df_songs['STARTTIME'] = pd.to_numeric(df_songs['STARTTIME'], errors='coerce').fillna(0).astype(int)
     
@@ -112,14 +116,17 @@ if menu == "🏠 楽曲一覧・分析":
 elif menu == "📅 ライブ明細検索":
     st.title("📅 過去のライブを探す")
     
-    # 検索フィルター
+    # 検索フィルター (日本語エンコードエラー回避のため簡略化)
     search_query = st.text_input("会場名や年月で検索 (部分一致)")
     
     filtered_lives = df_lives.copy()
     if search_query:
-        # 日付を文字列として検索対象に含める
-        filtered_lives['search_text'] = filtered_lives.apply(lambda x: f"{x['日付']} {x['会場名']}", axis=1)
-        filtered_lives = filtered_lives[filtered_lives['search_text'].str.contains(search_query, case=False, na=False)]
+        # 複数の列を個別に検索して結合（applyを避けて安全に）
+        mask = (
+            filtered_lives['会場名'].astype(str).str.contains(search_query, case=False, na=False) |
+            filtered_lives['日付'].astype(str).str.contains(search_query, case=False, na=False)
+        )
+        filtered_lives = filtered_lives[mask]
     
     if filtered_lives.empty:
         st.warning("条件に一致するライブが見つかりません。")
